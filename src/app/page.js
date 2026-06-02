@@ -96,8 +96,11 @@ export default function Home() {
   };
 
   const handleCariAntrian = async (e) => {
-    e.preventDefault();
-    if (!namaCari) return;
+    if (e) e.preventDefault();
+    if (!namaCari) {
+      alert('Masukkan nama terlebih dahulu.');
+      return;
+    }
     const { data } = await supabase.from('antrian').select('*').eq('tanggal', tglSekarang).ilike('nama_lengkap', namaCari).order('id', { ascending: false }).limit(1);
 
     if (data && data.length > 0) {
@@ -106,7 +109,7 @@ export default function Home() {
       langgananRealtimeSiswa(data[0].id);
       setModeCari(false); setNamaCari('');
     } else {
-      alert('Data antrian tidak ditemukan.');
+      alert('Data antrean tidak ditemukan. Pastikan nama yang Anda ketik sesuai saat mendaftar.');
     }
   };
 
@@ -133,7 +136,7 @@ export default function Home() {
       localStorage.setItem('spmb_antrian_aktif', JSON.stringify(dataAntrianBaru));
       setAntrianAktif(dataAntrianBaru);
       langgananRealtimeSiswa(dataAntrianBaru.id);
-      alert(`Sukses! Nomor antrian Verifikasi Anda: ${dataAntrianBaru.nomor_antrian}`);
+      alert(`Sukses! Nomor antrean Verifikasi Anda: ${dataAntrianBaru.nomor_antrian}`);
     } catch (err) {
       alert('Gagal mengambil rujukan: ' + err.message);
     } finally {
@@ -162,9 +165,16 @@ export default function Home() {
   const isVerifikasiPenuh = terpakaiVerifikasi >= config.kuota_verifikasi;
 
   const handleDaftar = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+    if (e) e.preventDefault();
     setPesanError('');
+    
+    // Validasi Manual khusus Safari iPhone yang terkadang gagal pada required HTML5
+    if (!namaLengkap || !asalSekolah || !nomorHp) {
+      setPesanError('Mohon lengkapi semua kolom identitas (Nama, Asal Sekolah, dan Nomor HP).');
+      return;
+    }
+
+    setLoading(true);
     
     if (jenisAntrian === 'pembuatan_akun' && isPembuatanPenuh) {
       setPesanError('Maaf, kuota untuk Pengajuan Akun hari ini telah penuh.');
@@ -199,15 +209,13 @@ export default function Home() {
   if (antrianAktif) {
     const isSelesaiPembuatan = antrianAktif.status === 'selesai' && antrianAktif.jenis_antrian === 'pembuatan_akun';
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4 antialiased">
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4 antialiased text-slate-900">
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-xl border border-slate-200 text-center max-w-md w-full">
           {antrianAktif.status !== 'selesai' ? (
             <>
-              <div className="bg-amber-500 text-white font-bold py-1 px-4 rounded-full text-xs inline-block mb-3 animate-pulse">
-                ⚠️ WAJIB SCREENSHOT HALAMAN INI
-              </div>
-              <h2 className="text-xl font-bold text-slate-800">SMA Negeri 3 Sragen</h2>
-              <p className="text-xs text-slate-400">Bukti Pengambilan Nomor Antrian Online</p>
+              {/* Teks Peringatan Wajib Screenshot Dihapus Sesuai Permintaan */}
+              <h2 className="text-xl font-bold text-slate-800 mt-2">SMA Negeri 3 Sragen</h2>
+              <p className="text-xs text-slate-400">Bukti Pengambilan Nomor Antrean Online</p>
               
               <div className="bg-slate-900 text-white rounded-2xl p-6 my-5 shadow-inner relative overflow-hidden">
                 <div className="absolute top-0 right-0 bg-blue-600 text-[10px] font-mono px-3 py-1 rounded-bl-lg">
@@ -218,7 +226,7 @@ export default function Home() {
                 
                 {antrianAktif.jenis_antrian === 'khusus' ? (
                   <div className="mt-3 flex flex-col items-center gap-1">
-                    <div className="bg-rose-600 px-4 py-1 rounded-full text-xs font-bold text-white border border-rose-500">Antrian Khusus</div>
+                    <div className="bg-rose-600 px-4 py-1 rounded-full text-xs font-bold text-white border border-rose-500">Antrean Khusus</div>
                     <p className="text-[10px] text-rose-300 italic max-w-xs px-2 mt-1 leading-tight">{antrianAktif.keterangan || "Layanan Prioritas."}</p>
                   </div>
                 ) : (
@@ -241,7 +249,7 @@ export default function Home() {
               
               <div className="bg-slate-50 border text-left p-3 rounded-xl space-y-1 text-xs text-slate-600 max-w-xs mx-auto">
                 <p><strong>Nama Siswa:</strong> {antrianAktif.nama_lengkap}</p>
-                <p><strong>No Antrian:</strong> {antrianAktif.nomor_antrian}</p>
+                <p><strong>No Antrean:</strong> {antrianAktif.nomor_antrian}</p>
               </div>
 
               {isSelesaiPembuatan ? (
@@ -251,7 +259,7 @@ export default function Home() {
                     Lanjutkan secara otomatis dan langsung masuk ke sistem Verifikasi Akun tanpa perlu mengisi data dari awal.
                   </p>
                   <button onClick={handleRujukMandiriKeVerifikasi} disabled={loading || isVerifikasiPenuh} className={`w-full font-bold py-2 rounded-lg text-xs transition-colors ${isVerifikasiPenuh ? 'bg-slate-300 text-white cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                    {loading ? 'Memproses...' : isVerifikasiPenuh ? 'Kuota Verifikasi Penuh' : 'Lanjut Ambil Antrian Verifikasi Akun'}
+                    {loading ? 'Memproses...' : isVerifikasiPenuh ? 'Kuota Verifikasi Penuh' : 'Lanjut Ambil Antrean Verifikasi Akun'}
                   </button>
                   <button onClick={selesaiDanKeluarSistem} className="text-[10px] text-slate-400 font-medium block mx-auto underline">
                     Tidak, Saya ingin keluar sistem
@@ -279,9 +287,9 @@ export default function Home() {
       <main className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 text-center">
         <div className="bg-white p-8 rounded-2xl shadow-md max-w-md w-full border border-slate-200">
           <div className="text-4xl mb-3">🛑</div>
-          <h1 className="text-xl font-bold text-slate-800">Pendaftaran Antrian Ditutup</h1>
+          <h1 className="text-xl font-bold text-slate-800">Pendaftaran Antrean Ditutup</h1>
           <button onClick={() => setModeCari(true)} className="mt-6 text-xs text-blue-600 font-semibold underline block mx-auto">
-            Cari nomor antrian saya yang hilang
+            Nomor antrean saya hilang, cari antrean saya
           </button>
         </div>
       </main>
@@ -289,7 +297,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 py-8 px-4 flex flex-col items-center antialiased">
+    <main className="min-h-screen bg-slate-50 py-8 px-4 flex flex-col items-center antialiased text-slate-900">
       <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm max-w-lg w-full border border-slate-200/60">
         
         <div className="text-center mb-6">
@@ -312,15 +320,15 @@ export default function Home() {
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Nama Lengkap Siswa</label>
-              <input type="text" required value={namaLengkap} onChange={(e) => setNamaLengkap(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50/50 outline-none" />
+              <input type="text" value={namaLengkap} onChange={(e) => setNamaLengkap(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white text-slate-900 outline-none focus:border-blue-500" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Asal Sekolah</label>
-              <input type="text" required value={asalSekolah} onChange={(e) => setAsalSekolah(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50/50 outline-none" />
+              <input type="text" value={asalSekolah} onChange={(e) => setAsalSekolah(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white text-slate-900 outline-none focus:border-blue-500" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Nomor HP Aktif</label>
-              <input type="tel" required value={nomorHp} onChange={(e) => setNomorHp(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50/50 outline-none" />
+              <input type="tel" value={nomorHp} onChange={(e) => setNomorHp(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white text-slate-900 outline-none focus:border-blue-500" />
             </div>
           </div>
 
@@ -329,12 +337,12 @@ export default function Home() {
             <div className="grid grid-cols-2 gap-3">
               <button type="button" onClick={() => handlePilihLayanan('pembuatan_akun')} disabled={isPembuatanPenuh} className={`border rounded-xl p-3 text-left transition-all ${isPembuatanPenuh ? 'opacity-50 cursor-not-allowed bg-slate-100' : jenisAntrian === 'pembuatan_akun' ? 'border-blue-600 bg-blue-50/40 ring-2 ring-blue-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
                 <span className="block text-xs font-bold text-slate-800">1. Pengajuan Akun</span>
-                <span className={`block text-[10px] mt-1 font-bold ${isPembuatanPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isPembuatanPenuh ? 'KUOTA PENUH' : 'Kode Antrian A'}</span>
+                <span className={`block text-[10px] mt-1 font-bold ${isPembuatanPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isPembuatanPenuh ? 'KUOTA PENUH' : 'Kode Antrean A'}</span>
               </button>
 
               <button type="button" onClick={() => handlePilihLayanan('verifikasi_akun')} disabled={isVerifikasiPenuh} className={`border rounded-xl p-3 text-left transition-all ${isVerifikasiPenuh ? 'opacity-50 cursor-not-allowed bg-slate-100' : jenisAntrian === 'verifikasi_akun' ? 'border-blue-600 bg-blue-50/40 ring-2 ring-blue-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
                 <span className="block text-xs font-bold text-slate-800">2. Verifikasi Akun</span>
-                <span className={`block text-[10px] mt-1 font-bold ${isVerifikasiPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isVerifikasiPenuh ? 'KUOTA PENUH' : 'Kode Antrian B'}</span>
+                <span className={`block text-[10px] mt-1 font-bold ${isVerifikasiPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isVerifikasiPenuh ? 'KUOTA PENUH' : 'Kode Antrean B'}</span>
               </button>
             </div>
           </div>
@@ -344,21 +352,21 @@ export default function Home() {
               <p className="text-[11px] font-bold uppercase text-slate-500 tracking-wider">Konfirmasi Persyaratan</p>
               {listSyarat.map((item, index) => (
                 <label key={index} className="flex items-start text-xs text-slate-700 cursor-pointer select-none font-medium">
-                  <input type="checkbox" checked={!!checklistDipilih[item]} onChange={() => toggleChecklist(item)} className="mt-0.5 mr-3 h-4 w-4 rounded border-slate-300 text-blue-600" />
+                  <input type="checkbox" checked={!!checklistDipilih[item]} onChange={() => toggleChecklist(item)} className="mt-0.5 mr-3 h-4 w-4 rounded border-slate-300 text-blue-600 bg-white" />
                   <span>{item}</span>
                 </label>
               ))}
             </div>
           )}
 
-          <button type="submit" disabled={loading || !semuaTercentang || (jenisAntrian === 'pembuatan_akun' ? isPembuatanPenuh : isVerifikasiPenuh)} className={`w-full py-2.5 rounded-xl text-xs font-bold text-white tracking-wide transition-all ${semuaTercentang && !loading && (jenisAntrian === 'pembuatan_akun' ? !isPembuatanPenuh : !isVerifikasiPenuh) ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'}`}>
-            {loading ? 'Memproses...' : 'Ambil Nomor Antrian'}
+          <button type="button" onClick={handleDaftar} disabled={loading || !semuaTercentang || (jenisAntrian === 'pembuatan_akun' ? isPembuatanPenuh : isVerifikasiPenuh)} className={`w-full py-2.5 rounded-xl text-xs font-bold text-white tracking-wide transition-all ${semuaTercentang && !loading && (jenisAntrian === 'pembuatan_akun' ? !isPembuatanPenuh : !isVerifikasiPenuh) ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'}`}>
+            {loading ? 'Memproses...' : 'Ambil Nomor Antrean'}
           </button>
         </form>
 
         <div className="border-t border-slate-100 mt-5 pt-4 text-center">
           <button onClick={() => setModeCari(true)} className="text-xs text-slate-400 font-medium hover:text-blue-600 transition-colors underline">
-            Saya kehilangan tangkapan layar, cari antrean saya
+            Nomor antrean saya hilang, cari antrean saya
           </button>
         </div>
       </div>
@@ -368,10 +376,10 @@ export default function Home() {
           <div className="bg-white p-6 rounded-xl max-w-sm w-full text-left shadow-2xl">
             <h3 className="font-bold text-sm text-slate-900 mb-1">Cari Antrean Aktif</h3>
             <form onSubmit={handleCariAntrian} className="space-y-3 mt-3">
-              <input type="text" required placeholder="Masukkan Nama Lengkap" value={namaCari} onChange={(e) => setNamaCari(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-xs text-slate-800 bg-slate-50 focus:outline-none" />
+              <input type="text" placeholder="Masukkan Nama Lengkap" value={namaCari} onChange={(e) => setNamaCari(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-blue-500" />
               <div className="flex gap-2 justify-end text-xs font-semibold pt-2">
-                <button type="button" onClick={() => setModeCari(false)} className="px-3 py-1.5 bg-slate-100 rounded-md">Batal</button>
-                <button type="submit" className="px-3 py-1.5 bg-blue-600 rounded-md text-white">Temukan</button>
+                <button type="button" onClick={() => setModeCari(false)} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-md">Batal</button>
+                <button type="button" onClick={handleCariAntrian} className="px-3 py-1.5 bg-blue-600 rounded-md text-white">Temukan</button>
               </div>
             </form>
           </div>

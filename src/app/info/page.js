@@ -58,7 +58,7 @@ export default function InfoEstimasiAntrian() {
           {/* KARTU STATISTIK PENGAJUAN AKUN */}
           <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-blue-100 transform transition-all hover:shadow-2xl">
             <div className="bg-blue-600 p-6 text-center text-white">
-              <h2 className="text-xl font-black uppercase tracking-widest mb-1">Pengajuan Akun (Loket A)</h2>
+              <h2 className="text-xl font-black uppercase tracking-widest mb-1">Pengajuan Akun</h2>
               <p className="text-blue-200 text-xs font-bold uppercase tracking-wider">Kuota Terpakai Hari Ini</p>
               <div className="flex items-end justify-center gap-2 my-2">
                 <span className="text-6xl font-black leading-none">{terpakaiPembuatan}</span>
@@ -81,7 +81,7 @@ export default function InfoEstimasiAntrian() {
           {/* KARTU STATISTIK VERIFIKASI AKUN */}
           <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-emerald-100 transform transition-all hover:shadow-2xl">
             <div className="bg-emerald-600 p-6 text-center text-white">
-              <h2 className="text-xl font-black uppercase tracking-widest mb-1">Verifikasi Akun (Loket B)</h2>
+              <h2 className="text-xl font-black uppercase tracking-widest mb-1">Verifikasi Akun</h2>
               <p className="text-emerald-200 text-xs font-bold uppercase tracking-wider">Kuota Terpakai Hari Ini</p>
               <div className="flex items-end justify-center gap-2 my-2">
                 <span className="text-6xl font-black leading-none">{terpakaiVerifikasi}</span>

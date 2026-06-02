@@ -128,6 +128,9 @@ export default function AdminDashboard() {
   }, [tanggalArsip, daftarAntrian, isLoggedIn]);
 
   const ubahSistemManajemenForm = async (kolom, nilai) => {
+    // PEMBARUAN: Update state lokal secara instan (Optimistic Update) agar tidak ada delay saat mengetik angka kuota
+    setConfig(prev => ({ ...prev, [kolom]: nilai })); 
+    // Simpan ke database di latar belakang
     await supabase.from('pengaturan_sistem').update({ [kolom]: nilai }).eq('id', 1);
   };
 
@@ -174,11 +177,20 @@ export default function AdminDashboard() {
         const listTertunda = daftarAntrian.filter(a => a.jenis_antrian === item.jenis_antrian && a.status === 'dipanggil' && a.id !== item.id);
         const nextBaru = daftarAntrian.find(a => a.jenis_antrian === item.jenis_antrian && a.status === 'menunggu');
 
-        if (listTertunda.length === 0 && nextBaru) {
-          await supabase.from('antrian').update({ status: 'dipanggil', updated_at: new Date().toISOString() }).eq('id', nextBaru.id).eq('status', 'menunggu');
-        } else if (listTertunda.length > 0) {
-          const namaLayanan = item.jenis_antrian === 'pembuatan_akun' ? 'Pengajuan Akun' : item.jenis_antrian === 'verifikasi_akun' ? 'Verifikasi Akun' : 'Antrean Khusus';
-          setModalLanjutan({ show: true, jenis: item.jenis_antrian, namaLayanan, idSelesai: item.id });
+        if (item.jenis_antrian === 'verifikasi_akun') {
+          // KHUSUS VERIFIKASI AKUN: 
+          // Tidak otomatis panggil baru, dan tidak memunculkan popup panggil ulang.
+          // Semuanya murni dilakukan manual dari klik tabel.
+        } else {
+          // KHUSUS PENGAJUAN AKUN & KHUSUS:
+          if (listTertunda.length === 0 && nextBaru) {
+            // Otomatis panggil nomor baru jika tidak ada yang tertunda/panggil ulang
+            await supabase.from('antrian').update({ status: 'dipanggil', updated_at: new Date().toISOString() }).eq('id', nextBaru.id).eq('status', 'menunggu');
+          } else if (listTertunda.length > 0) {
+            // Memunculkan popup jika ada panggil ulang yang menggantung
+            const namaLayanan = item.jenis_antrian === 'pembuatan_akun' ? 'Pengajuan Akun' : 'Antrean Khusus';
+            setModalLanjutan({ show: true, jenis: item.jenis_antrian, namaLayanan, idSelesai: item.id });
+          }
         }
       }
     } catch (err) { alert('Sistem Terganggu: ' + err.message); } finally { setAksiLoading(null); }
