@@ -10,14 +10,6 @@ export default function DisplayMonitor() {
   
   const nomorTerakhirDisuarakan = useRef({ pembuatan_akun: null, verifikasi_akun: null, khusus: null });
 
-  const [tglSekarang] = useState(() => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  });
-
   useEffect(() => {
     const loadVoices = () => {
       setAvailableVoices(window.speechSynthesis.getVoices());
@@ -31,32 +23,34 @@ export default function DisplayMonitor() {
   useEffect(() => {
     if (!izinSuaraDiberikan) return;
     ambilAntrianAktif();
+    
     const channel = supabase.channel('display_v2_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'antrian' }, () => ambilAntrianAktif())
       .subscribe();
+      
     return () => supabase.removeChannel(channel);
-  }, [izinSuaraDiberikan, tglSekarang]);
+  }, [izinSuaraDiberikan]);
 
   const aktifkanLayarDanSuara = () => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel(); 
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
-    }
+    if (window.speechSynthesis) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
     setIzinSuaraDiberikan(true);
   };
 
   const bunyikanSuaraPanggilan = (nomorTiket, namaSiswa, jenisLayanan) => {
     if (!window.speechSynthesis) return;
     
+    // LOGIKA BARU: Baris window.speechSynthesis.cancel() DIHAPUS.
+    // Dengan begitu, suara yang sedang berbicara TIDAK AKAN dipotong, 
+    // melainkan panggilan baru akan masuk ke sistem antrean native browser.
+    
+    // Memisahkan Huruf dan Angka agar dibaca utuh
     const pecahKode = nomorTiket.split('-');
     const huruf = pecahKode[0] || '';
+    const angka = pecahKode[1] || '';
     
-    const angka = parseInt(pecahKode[1], 10) || pecahKode[1] || ''; 
-    
-    let teksLayanan = jenisLayanan === 'pembuatan_akun' ? 'pembuatan akun' : jenisLayanan === 'verifikasi_akun' ? 'verifikasi berkas' : 'antrean khusus';
+    let teksLayanan = jenisLayanan === 'pembuatan_akun' ? 'pengajuan akun' : jenisLayanan === 'verifikasi_akun' ? 'verifikasi akun' : 'antrean khusus';
 
-    const kalimatPanggilan = `Nomor antrean, ${huruf}... ${angka}.., atas nama, ${namaSiswa}, silakan menuju ke bagian, ${teksLayanan}`;
-    
+    const kalimatPanggilan = `Nomor antrean. ${huruf}. ${angka}. Atas nama. ${namaSiswa}. Silakan menuju bagian. ${teksLayanan}.`;
     const utterance = new SpeechSynthesisUtterance(kalimatPanggilan);
     
     const idVoice = availableVoices.find(v => 
@@ -70,36 +64,72 @@ export default function DisplayMonitor() {
     utterance.rate = 0.85; 
     utterance.pitch = 1.0;    
     
+    // Menambahkan ucapan ke sistem Queue browser
     window.speechSynthesis.speak(utterance);
   };
 
   const ambilAntrianAktif = async () => {
+    const tglSekarang = new Date().toISOString().split('T')[0];
+    
     const { data } = await supabase
       .from('antrian')
       .select('*')
       .eq('tanggal', tglSekarang)
-      .eq('status', 'dipanggil')
-      .order('updated_at', { ascending: false });
+      .in('status', ['dipanggil', 'selesai']);
 
     if (data) {
       const infoAntrian = { pembuatan_akun: null, verifikasi_akun: null, khusus: null };
-      
-      data.forEach(item => {
-        if (!infoAntrian[item.jenis_antrian]) {
-          infoAntrian[item.jenis_antrian] = { 
-            nomor: item.nomor_antrian, 
-            nama: item.nama_lengkap, 
-            updated: item.updated_at || item.created_at 
-          };
+      const layananTypes = ['pembuatan_akun', 'verifikasi_akun', 'khusus'];
+
+      const getTimestamp = (item) => new Date(item.updated_at || item.created_at).getTime();
+
+      layananTypes.forEach(layanan => {
+        const listSelesai = data.filter(item => item.jenis_antrian === layanan && item.status === 'selesai');
+        let waktuSelesaiTerakhir = 0;
+        if (listSelesai.length > 0) {
+          listSelesai.sort((a, b) => getTimestamp(b) - getTimestamp(a));
+          waktuSelesaiTerakhir = getTimestamp(listSelesai[0]);
         }
+
+        const listDipanggil = data.filter(item => item.jenis_antrian === layanan && item.status === 'dipanggil');
+        let aktif = null;
+        
+        if (listDipanggil.length > 0) {
+          listDipanggil.sort((a, b) => getTimestamp(b) - getTimestamp(a));
+          const kandidat = listDipanggil[0];
+          const waktuKandidat = getTimestamp(kandidat);
+
+          if (waktuKandidat > waktuSelesaiTerakhir) {
+            aktif = {
+              nomor: kandidat.nomor_antrian,
+              nama: kandidat.nama_lengkap,
+              updated: kandidat.updated_at || kandidat.created_at
+            };
+          }
+        }
+        
+        infoAntrian[layanan] = aktif;
       });
 
+      // Pengecekan Suara
       Object.keys(infoAntrian).forEach(layanan => {
         const baru = infoAntrian[layanan];
         const lama = nomorTerakhirDisuarakan.current[layanan];
 
-        if (baru && (!lama || baru.nomor !== lama.nomor || baru.updated !== lama.updated)) {
-          bunyikanSuaraPanggilan(baru.nomor, baru.nama, layanan);
+        if (baru) {
+          let panggilSuara = false;
+
+          if (!lama) {
+            panggilSuara = true;
+          } else if (baru.nomor === lama.nomor && baru.updated !== lama.updated) {
+            panggilSuara = true;
+          } else if (baru.nomor !== lama.nomor && new Date(baru.updated).getTime() > new Date(lama.updated).getTime()) {
+            panggilSuara = true;
+          }
+
+          if (panggilSuara) {
+            bunyikanSuaraPanggilan(baru.nomor, baru.nama, layanan);
+          }
         }
       });
 
@@ -121,15 +151,19 @@ export default function DisplayMonitor() {
   }
 
   const LayarLoket = ({ title, bgHeader, data, textColor }) => (
-    <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl p-5 text-center flex flex-col justify-between h-full">
+    <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl p-5 text-center flex flex-col justify-between h-full transition-all duration-300">
       <div>
-        <div className={`${bgHeader} rounded-xl py-2 text-base font-black tracking-wide mb-4`}>{title}</div>
+        <div className={`${bgHeader} rounded-xl py-2 text-base font-black tracking-wide mb-4 shadow-sm`}>{title}</div>
         <p className="text-slate-500 text-[11px] font-bold uppercase tracking-widest">Nomor Antrean</p>
-        <h1 className={`text-6xl font-black my-2 tracking-tight ${textColor}`}>{data ? data.nomor : '---'}</h1>
+        <h1 className={`text-6xl font-black my-2 tracking-tight transition-opacity duration-500 ${data ? textColor : 'text-slate-700 opacity-50'}`}>
+          {data ? data.nomor : '---'}
+        </h1>
       </div>
       <div className="border-t border-slate-800 pt-3 mt-4 flex flex-col justify-end">
         <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Nama Pendaftar</p>
-        <p className={`text-2xl font-bold truncate ${textColor}`} title={data ? data.nama : ''}>{data ? data.nama : '---'}</p>
+        <p className={`text-2xl font-bold truncate transition-opacity duration-500 ${data ? textColor : 'text-slate-600 opacity-50'}`} title={data ? data.nama : ''}>
+          {data ? data.nama : 'Kosong'}
+        </p>
       </div>
     </div>
   );
@@ -142,8 +176,8 @@ export default function DisplayMonitor() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 my-auto items-stretch h-[50vh]">
-        <LayarLoket title="PEMBUATAN AKUN" bgHeader="bg-blue-600" data={antrianBerjalan.pembuatan_akun} textColor="text-white" />
-        <LayarLoket title="VERIFIKASI BERKAS" bgHeader="bg-emerald-600" data={antrianBerjalan.verifikasi_akun} textColor="text-emerald-400" />
+        <LayarLoket title="PENGAJUAN AKUN" bgHeader="bg-blue-600" data={antrianBerjalan.pembuatan_akun} textColor="text-white" />
+        <LayarLoket title="VERIFIKASI AKUN" bgHeader="bg-emerald-600" data={antrianBerjalan.verifikasi_akun} textColor="text-emerald-400" />
         <LayarLoket title="ANTREAN KHUSUS" bgHeader="bg-rose-600" data={antrianBerjalan.khusus} textColor="text-rose-400" />
       </div>
 

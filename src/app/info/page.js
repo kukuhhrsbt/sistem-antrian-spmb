@@ -5,109 +5,102 @@ import { supabase } from '@/lib/supabase';
 
 export default function InfoEstimasiAntrian() {
   const [daftarAntrian, setDaftarAntrian] = useState([]);
+  const [config, setConfig] = useState({ 
+    kuota_pembuatan: 0, kuota_verifikasi: 0, 
+    offset_kuota_pembuatan: 0, offset_kuota_verifikasi: 0 
+  });
+  
   const tglSekarang = new Date().toISOString().split('T')[0];
 
-  const fetchDaftarAntrian = async () => {
-    const { data } = await supabase
-      .from('antrian')
-      .select('*')
-      .eq('tanggal', tglSekarang);
-    if (data) setDaftarAntrian(data);
+  const fetchData = async () => {
+    const { data: antrian } = await supabase.from('antrian').select('nomor_hp, jenis_antrian, status').eq('tanggal', tglSekarang);
+    if (antrian) setDaftarAntrian(antrian);
+    
+    const { data: pengaturan } = await supabase.from('pengaturan_sistem').select('kuota_pembuatan, kuota_verifikasi, offset_kuota_pembuatan, offset_kuota_verifikasi').eq('id', 1).single();
+    if (pengaturan) setConfig(pengaturan);
   };
 
   useEffect(() => {
-    fetchDaftarAntrian();
-    const channel = supabase.channel('info_publik_rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'antrian' }, () => {
-        fetchDaftarAntrian();
-      })
+    fetchData();
+    const channel = supabase.channel('info_publik_rt_v5')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'antrian' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sistem' }, () => fetchData())
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, []);
 
-  const antrianA = daftarAntrian.filter(a => a.jenis_antrian === 'pembuatan_akun');
-  const selesaiA = antrianA.filter(a => a.status === 'selesai').length;
-  const menungguA = antrianA.filter(a => a.status === 'menunggu').length; 
-  const dipanggilA = antrianA.find(a => a.status === 'dipanggil');
+  // Filter Data Pengajuan Akun
+  const antrianPembuatan = daftarAntrian.filter(a => a.jenis_antrian === 'pembuatan_akun');
+  const terpakaiPembuatan = Math.max(0, new Set(antrianPembuatan.map(item => item.nomor_hp)).size - (config.offset_kuota_pembuatan || 0));
+  const selesaiPembuatan = antrianPembuatan.filter(a => a.status === 'selesai').length;
+  const menungguPembuatan = antrianPembuatan.filter(a => a.status === 'menunggu' || a.status === 'dipanggil').length;
 
-  const antrianB = daftarAntrian.filter(a => a.jenis_antrian === 'verifikasi_akun');
-  const selesaiB = antrianB.filter(a => a.status === 'selesai').length;
-  const menungguB = antrianB.filter(a => a.status === 'menunggu').length;
-  const dipanggilB = antrianB.find(a => a.status === 'dipanggil');
-
-  const formatEstimasiWaktu = (totalMenit) => {
-    if (totalMenit === 0) return '0 Menit';
-    if (totalMenit < 60) return `${totalMenit} Menit`;
-    const jam = Math.floor(totalMenit / 60);
-    const sisaMenit = totalMenit % 60;
-    return sisaMenit > 0 ? `${jam} Jam ${sisaMenit} Menit` : `${jam} Jam`;
-  };
-
-  const CardLoket = ({ title, total, selesai, menunggu, dipanggil, warnaBg, warnaText, jumlahKomputer }) => {
-    const estimasiMenit = Math.ceil(menunggu / jumlahKomputer) * 10;
-    
-    return (
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
-        <div className={`${warnaBg} text-white p-4 text-center font-black tracking-wide`}>
-          {title}
-        </div>
-        <div className="p-6 space-y-6">
-          <div className="text-center">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Sedang Dilayani</p>
-            <div className={`text-5xl font-black ${warnaText}`}>
-              {dipanggil ? dipanggil.nomor_antrian : '---'}
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 border-t border-slate-100 pt-4">
-            <div className="bg-slate-50 p-3 rounded-xl text-center">
-              <p className="text-[10px] font-bold text-slate-500 mb-1">Total Pendaftar</p>
-              <h3 className="text-xl font-black text-slate-800">{total.length}</h3>
-            </div>
-            <div className="bg-emerald-50 p-3 rounded-xl text-center">
-              <p className="text-[10px] font-bold text-emerald-600 mb-1">Sudah Dilayani</p>
-              <h3 className="text-xl font-black text-emerald-700">{selesai}</h3>
-            </div>
-          </div>
-
-          <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex flex-col items-center gap-1">
-            <p className="text-xs font-bold text-amber-800 uppercase tracking-wider">Estimasi Waktu Tunggu</p>
-            <h3 className="text-2xl font-black text-amber-600">± {formatEstimasiWaktu(estimasiMenit)}</h3>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  // Filter Data Verifikasi Akun
+  const antrianVerifikasi = daftarAntrian.filter(a => a.jenis_antrian === 'verifikasi_akun');
+  const terpakaiVerifikasi = Math.max(0, new Set(antrianVerifikasi.map(item => item.nomor_hp)).size - (config.offset_kuota_verifikasi || 0));
+  const selesaiVerifikasi = antrianVerifikasi.filter(a => a.status === 'selesai').length;
+  const menungguVerifikasi = antrianVerifikasi.filter(a => a.status === 'menunggu' || a.status === 'dipanggil').length;
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans antialiased text-slate-800">
-      <div className="max-w-4xl mx-auto space-y-8">
-        <div className="text-center space-y-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-          <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Estimasi Waktu Pelayanan</h1>
-          <p className="text-sm font-bold text-blue-600 uppercase tracking-widest">SPMB SMA Negeri 3 Sragen</p>
+    <main className="min-h-screen bg-slate-50 flex flex-col justify-center p-4 md:p-8 font-sans antialiased text-slate-800">
+      <div className="max-w-6xl mx-auto w-full space-y-8">
+        
+        <div className="text-center space-y-2 bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+          <h1 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight">Status Pelayanan Pendaftaran</h1>
+          <p className="text-base font-bold text-blue-600 uppercase tracking-widest mt-2">SPMB SMA Negeri 3 Sragen</p>
+          <p className="text-sm text-slate-500 max-w-lg mx-auto mt-4">
+            Informasi di bawah ini diperbarui secara seketika (*realtime*).
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <CardLoket 
-            title="LOKET A: PEMBUATAN AKUN" 
-            total={antrianA} 
-            selesai={selesaiA} 
-            menunggu={menungguA} 
-            dipanggil={dipanggilA} 
-            warnaBg="bg-blue-600" 
-            warnaText="text-blue-600"
-            jumlahKomputer={4} 
-          />
-          <CardLoket 
-            title="LOKET B: VERIFIKASI BERKAS" 
-            total={antrianB} 
-            selesai={selesaiB} 
-            menunggu={menungguB} 
-            dipanggil={dipanggilB} 
-            warnaBg="bg-emerald-600" 
-            warnaText="text-emerald-600"
-            jumlahKomputer={4} 
-          />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          
+          {/* KARTU STATISTIK PENGAJUAN AKUN */}
+          <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-blue-100 transform transition-all hover:shadow-2xl">
+            <div className="bg-blue-600 p-6 text-center text-white">
+              <h2 className="text-xl font-black uppercase tracking-widest mb-1">Pengajuan Akun (Loket A)</h2>
+              <p className="text-blue-200 text-xs font-bold uppercase tracking-wider">Kuota Terpakai Hari Ini</p>
+              <div className="flex items-end justify-center gap-2 my-2">
+                <span className="text-6xl font-black leading-none">{terpakaiPembuatan}</span>
+                <span className="text-xl font-bold text-blue-300 mb-1">/ {config.kuota_pembuatan}</span>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 divide-x divide-slate-100 bg-white">
+              <div className="p-6 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-500 mb-2">Telah Diselesaikan</p>
+                <p className="text-4xl font-black text-slate-800">{selesaiPembuatan}</p>
+              </div>
+              <div className="p-6 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-500 mb-2">Menunggu Giliran</p>
+                <p className="text-4xl font-black text-slate-800">{menungguPembuatan}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* KARTU STATISTIK VERIFIKASI AKUN */}
+          <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-emerald-100 transform transition-all hover:shadow-2xl">
+            <div className="bg-emerald-600 p-6 text-center text-white">
+              <h2 className="text-xl font-black uppercase tracking-widest mb-1">Verifikasi Akun (Loket B)</h2>
+              <p className="text-emerald-200 text-xs font-bold uppercase tracking-wider">Kuota Terpakai Hari Ini</p>
+              <div className="flex items-end justify-center gap-2 my-2">
+                <span className="text-6xl font-black leading-none">{terpakaiVerifikasi}</span>
+                <span className="text-xl font-bold text-emerald-300 mb-1">/ {config.kuota_verifikasi}</span>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 divide-x divide-slate-100 bg-white">
+              <div className="p-6 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-500 mb-2">Telah Diselesaikan</p>
+                <p className="text-4xl font-black text-slate-800">{selesaiVerifikasi}</p>
+              </div>
+              <div className="p-6 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-500 mb-2">Menunggu Giliran</p>
+                <p className="text-4xl font-black text-slate-800">{menungguVerifikasi}</p>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </main>
