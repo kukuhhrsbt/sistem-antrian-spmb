@@ -12,8 +12,7 @@ export default function AdminDashboard() {
 
   const [config, setConfig] = useState({ 
     id: 1, pendaftaran_dibuka: true, mode_waktu_aktif: false, jam_buka: '07:30:00', jam_tutup: '15:00:00', 
-    kuota_pembuatan: 50, kuota_verifikasi: 50,
-    offset_kuota_pembuatan: 0, offset_kuota_verifikasi: 0,
+    kuota_pembuatan: 100, offset_kuota_pembuatan: 0,
     checklist_pembuatan: [], checklist_verifikasi: [] 
   });
   
@@ -26,7 +25,7 @@ export default function AdminDashboard() {
   const [daftarAntrian, setDaftarAntrian] = useState([]);
   
   const [statistik, setStatistik] = useState({ 
-    pemUnik: 0, verUnik: 0,
+    totalTerpakai: 0,
     pemMenunggu: 0, verMenunggu: 0, khsMenunggu: 0,
     pemSelesai: 0, verSelesai: 0, khsSelesai: 0
   });
@@ -40,7 +39,8 @@ export default function AdminDashboard() {
   const [keteranganKhusus, setKeteranganKhusus] = useState('');
   const [isSubmitManual, setIsSubmitManual] = useState(false);
 
-  const tglSekarang = new Date().toISOString().split('T')[0];
+  // KUNCI ZONA WAKTU: Pastikan selalu menarik tanggal sesuai zona waktu Indonesia (WIB)
+  const tglSekarang = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
   const [tanggalArsip, setTanggalArsip] = useState(tglSekarang);
   const [dataArsip, setDataArsip] = useState([]);
 
@@ -85,12 +85,20 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!daftarAntrian) return;
     
-    const hpsPembuatan = new Set(daftarAntrian.filter(a => a.jenis_antrian === 'pembuatan_akun').map(a => a.nomor_hp)).size;
-    const hpsVerifikasi = new Set(daftarAntrian.filter(a => a.jenis_antrian === 'verifikasi_akun').map(a => a.nomor_hp)).size;
+    const tiketPembuatan = daftarAntrian.filter(a => a.jenis_antrian === 'pembuatan_akun').length;
+    const tiketVerifikasi = daftarAntrian.filter(a => a.jenis_antrian === 'verifikasi_akun').length;
+    const totalTiket = tiketPembuatan + tiketVerifikasi;
+    
+    let offsetDB = parseInt(config.offset_kuota_pembuatan) || 0;
+    
+    // SISTEM PENYEMBUH (SELF-HEALING): 
+    // Jika offset sisa kemarin membeku (lebih besar dari tiket hari ini), kita nol-kan agar hari ini jalan.
+    if (offsetDB > totalTiket) {
+      offsetDB = 0;
+    }
 
     setStatistik({
-      pemUnik: Math.max(0, hpsPembuatan - (config.offset_kuota_pembuatan || 0)),
-      verUnik: Math.max(0, hpsVerifikasi - (config.offset_kuota_verifikasi || 0)),
+      totalTerpakai: Math.max(0, totalTiket - offsetDB),
       
       pemMenunggu: daftarAntrian.filter(a => a.jenis_antrian === 'pembuatan_akun' && a.status === 'menunggu').length,
       verMenunggu: daftarAntrian.filter(a => a.jenis_antrian === 'verifikasi_akun' && a.status === 'menunggu').length,
@@ -128,9 +136,7 @@ export default function AdminDashboard() {
   }, [tanggalArsip, daftarAntrian, isLoggedIn]);
 
   const ubahSistemManajemenForm = async (kolom, nilai) => {
-    // PEMBARUAN: Update state lokal secara instan (Optimistic Update) agar tidak ada delay saat mengetik angka kuota
     setConfig(prev => ({ ...prev, [kolom]: nilai })); 
-    // Simpan ke database di latar belakang
     await supabase.from('pengaturan_sistem').update({ [kolom]: nilai }).eq('id', 1);
   };
 
@@ -178,16 +184,12 @@ export default function AdminDashboard() {
         const nextBaru = daftarAntrian.find(a => a.jenis_antrian === item.jenis_antrian && a.status === 'menunggu');
 
         if (item.jenis_antrian === 'verifikasi_akun') {
-          // KHUSUS VERIFIKASI AKUN: 
-          // Tidak otomatis panggil baru, dan tidak memunculkan popup panggil ulang.
-          // Semuanya murni dilakukan manual dari klik tabel.
+          // KHUSUS VERIFIKASI AKUN
         } else {
-          // KHUSUS PENGAJUAN AKUN & KHUSUS:
+          // KHUSUS PENGAJUAN AKUN & KHUSUS
           if (listTertunda.length === 0 && nextBaru) {
-            // Otomatis panggil nomor baru jika tidak ada yang tertunda/panggil ulang
             await supabase.from('antrian').update({ status: 'dipanggil', updated_at: new Date().toISOString() }).eq('id', nextBaru.id).eq('status', 'menunggu');
           } else if (listTertunda.length > 0) {
-            // Memunculkan popup jika ada panggil ulang yang menggantung
             const namaLayanan = item.jenis_antrian === 'pembuatan_akun' ? 'Pengajuan Akun' : 'Antrean Khusus';
             setModalLanjutan({ show: true, jenis: item.jenis_antrian, namaLayanan, idSelesai: item.id });
           }
@@ -219,17 +221,17 @@ export default function AdminDashboard() {
     } finally { setIsSubmitManual(false); }
   };
 
-  const resetKuotaTerbit = async (jenis, displayInfo) => {
-    const konfirmasi = prompt(`PERINGATAN: Ini hanya akan mereset angka "Kuota Terbit" ke 0 (Nol) TANPA menghapus data antrean siswa di tabel. \n\nKetik "RESET" untuk mereset Kuota Terbit bagian [ ${displayInfo} ] ke 0:`);
+  const resetKuotaTotal = async () => {
+    const konfirmasi = prompt(`PERINGATAN: Ini akan mereset "Sisa Kuota" kembali penuh sesuai batas. \n\nKetik "RESET" untuk mereset:`);
     if (konfirmasi === 'RESET') {
-      setAksiLoading(`reset-${jenis}`);
-      let kolomOffset = jenis === 'pembuatan' ? 'offset_kuota_pembuatan' : 'offset_kuota_verifikasi';
-      let targetJenis = jenis === 'pembuatan' ? 'pembuatan_akun' : 'verifikasi_akun';
-      let siswaReal = new Set(daftarAntrian.filter(a => a.jenis_antrian === targetJenis).map(a => a.nomor_hp)).size;
+      setAksiLoading('reset-kuota');
+      let tiketPembuatan = daftarAntrian.filter(a => a.jenis_antrian === 'pembuatan_akun').length;
+      let tiketVerifikasi = daftarAntrian.filter(a => a.jenis_antrian === 'verifikasi_akun').length;
+      let totalRealSekarang = tiketPembuatan + tiketVerifikasi;
 
-      const { error } = await supabase.from('pengaturan_sistem').update({ [kolomOffset]: siswaReal }).eq('id', 1);
-      if (error) alert('Gagal reset! Pastikan Anda sudah menjalankan perintah SQL penambahan kolom offset di Supabase. ' + error.message);
-      else alert(`Kuota ${displayInfo} berhasil direset!`);
+      const { error } = await supabase.from('pengaturan_sistem').update({ offset_kuota_pembuatan: totalRealSekarang }).eq('id', 1);
+      if (error) alert('Gagal reset! ' + error.message);
+      else alert(`Sukses! Sisa kuota kembali penuh (Reset Offset).`);
       setAksiLoading(null);
     } else if (konfirmasi !== null) {
       alert('Teks salah, reset dibatalkan.');
@@ -285,6 +287,9 @@ export default function AdminDashboard() {
   const arsipPembuatan = dataArsip.filter(a => a.jenis_antrian === 'pembuatan_akun');
   const arsipVerifikasi = dataArsip.filter(a => a.jenis_antrian === 'verifikasi_akun');
   const arsipKhusus = dataArsip.filter(a => a.jenis_antrian === 'khusus');
+  
+  const limitKuota = parseInt(config.kuota_pembuatan) || 0;
+  const sisaKuotaUtama = Math.max(0, limitKuota - statistik.totalTerpakai);
 
   if (isCheckingAuth) return <main className="min-h-screen bg-slate-900 flex items-center justify-center"><p className="text-white animate-pulse">Memuat sistem keamanan...</p></main>;
 
@@ -444,6 +449,31 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
+          <div>
+            <h2 className="font-black text-slate-800 text-sm">🎟️ Batas Kuota Antrean Utama</h2>
+            <p className="text-[10px] text-slate-500 mt-0.5">Satu Kuota Terpusat untuk seluruh layanan (Pengajuan & Verifikasi).</p>
+          </div>
+          <div className="flex items-center gap-5">
+            <div className="text-right">
+              <p className="text-[10px] font-bold text-slate-500 uppercase">Sisa Kuota</p>
+              <p className="text-2xl font-black text-blue-600 leading-none">{sisaKuotaUtama}</p>
+            </div>
+            <span className="text-2xl font-light text-slate-300">/</span>
+            <div className="flex items-center gap-2">
+              <input 
+                type="number" 
+                value={config.kuota_pembuatan} 
+                onChange={(e) => ubahSistemManajemenForm('kuota_pembuatan', parseInt(e.target.value) || 0)} 
+                className="w-20 text-center border border-slate-300 rounded-lg bg-slate-50 p-2 font-black text-slate-900 outline-none focus:border-blue-500" 
+              />
+              <button onClick={resetKuotaTotal} disabled={aksiLoading === 'reset-kuota'} className="bg-slate-100 text-slate-600 hover:bg-rose-100 hover:text-rose-600 px-3 py-2 rounded-lg text-xs font-bold transition-colors">
+                {aksiLoading === 'reset-kuota' ? 'Mereset...' : '🔄 Reset'}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           
           <div className="bg-white p-4 rounded-xl border border-blue-200 border-l-4 border-l-blue-600 space-y-3 shadow-sm">
@@ -451,19 +481,12 @@ export default function AdminDashboard() {
               <div>
                 <p className="text-[10px] font-bold text-blue-500">PENGAJUAN AKUN (A)</p>
                 <div className="flex gap-4 mt-1">
-                  <div><span className="text-xl font-black text-blue-700">{statistik.pemUnik}</span><span className="text-[9px] text-slate-400 ml-1 block">Tercatat</span></div>
                   <div><span className="text-xl font-black text-amber-500">{statistik.pemMenunggu}</span><span className="text-[9px] text-slate-400 ml-1 block">Tunggu</span></div>
                   <div><span className="text-xl font-black text-emerald-600">{statistik.pemSelesai}</span><span className="text-[9px] text-slate-400 ml-1 block">Selesai</span></div>
                 </div>
               </div>
-              <button onClick={() => resetKuotaTerbit('pembuatan', 'Pengajuan Akun')} disabled={aksiLoading === 'reset-pembuatan'} className="bg-blue-50 text-blue-600 hover:bg-rose-100 hover:text-rose-600 px-2 py-1 rounded text-[9px] font-bold">
-                {aksiLoading === 'reset-pembuatan' ? 'Mereset...' : '🔄 Reset'}
-              </button>
             </div>
-            <div className="flex items-center justify-between pt-1">
-              <span className="font-bold text-blue-800 text-[10px] uppercase">Batas Kuota Pengajuan:</span>
-              <input type="number" value={config.kuota_pembuatan} onChange={(e) => ubahSistemManajemenForm('kuota_pembuatan', parseInt(e.target.value) || 0)} className="w-16 text-center border border-blue-200 rounded bg-blue-50 p-1 font-bold text-blue-900 outline-none" />
-            </div>
+            <p className="text-[9px] text-slate-400 italic">Terhubung ke Kuota Utama: Pengurangan mutlak per tiket.</p>
           </div>
 
           <div className="bg-white p-4 rounded-xl border border-emerald-200 border-l-4 border-l-emerald-600 space-y-3 shadow-sm">
@@ -471,19 +494,12 @@ export default function AdminDashboard() {
               <div>
                 <p className="text-[10px] font-bold text-emerald-500">VERIFIKASI AKUN (B)</p>
                 <div className="flex gap-4 mt-1">
-                  <div><span className="text-xl font-black text-emerald-700">{statistik.verUnik}</span><span className="text-[9px] text-slate-400 ml-1 block">Tercatat</span></div>
                   <div><span className="text-xl font-black text-amber-500">{statistik.verMenunggu}</span><span className="text-[9px] text-slate-400 ml-1 block">Tunggu</span></div>
                   <div><span className="text-xl font-black text-emerald-600">{statistik.verSelesai}</span><span className="text-[9px] text-slate-400 ml-1 block">Selesai</span></div>
                 </div>
               </div>
-              <button onClick={() => resetKuotaTerbit('verifikasi', 'Verifikasi Akun')} disabled={aksiLoading === 'reset-verifikasi'} className="bg-emerald-50 text-emerald-600 hover:bg-rose-100 hover:text-rose-600 px-2 py-1 rounded text-[9px] font-bold">
-                {aksiLoading === 'reset-verifikasi' ? 'Mereset...' : '🔄 Reset'}
-              </button>
             </div>
-            <div className="flex items-center justify-between pt-1">
-              <span className="font-bold text-emerald-800 text-[10px] uppercase">Batas Kuota Verifikasi:</span>
-              <input type="number" value={config.kuota_verifikasi} onChange={(e) => ubahSistemManajemenForm('kuota_verifikasi', parseInt(e.target.value) || 0)} className="w-16 text-center border border-emerald-200 rounded bg-emerald-50 p-1 font-bold text-emerald-900 outline-none" />
-            </div>
+            <p className="text-[9px] text-slate-400 italic">Terhubung ke Kuota Utama: Pengurangan mutlak per tiket.</p>
           </div>
 
         </div>

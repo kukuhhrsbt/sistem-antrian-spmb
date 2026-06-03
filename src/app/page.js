@@ -11,14 +11,12 @@ export default function Home() {
   
   const [config, setConfig] = useState({ 
     pendaftaran_dibuka: true, mode_waktu_aktif: false, jam_buka: '07:30', jam_tutup: '15:00', 
-    kuota_pembuatan: 50, kuota_verifikasi: 50, 
+    kuota_pembuatan: 100, offset_kuota_pembuatan: 0,
     checklist_pembuatan: [], checklist_verifikasi: [] 
   });
   const [checklistDipilih, setChecklistDipilih] = useState({});
   
-  // State Kuota Spesifik Tanpa Total
-  const [terpakaiPembuatan, setTerpakaiPembuatan] = useState(0);
-  const [terpakaiVerifikasi, setTerpakaiVerifikasi] = useState(0);
+  const [terpakaiTotal, setTerpakaiTotal] = useState(0);
   
   const [pendaftaranSistemTerbuka, setPendaftaranSistemTerbuka] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -28,7 +26,8 @@ export default function Home() {
   const [namaCari, setNamaCari] = useState('');
   const [modeCari, setModeCari] = useState(false);
 
-  const tglSekarang = new Date().toISOString().split('T')[0];
+  // KUNCI ZONA WAKTU: Menarik format tanggal sinkron dengan zona waktu WIB
+  const tglSekarang = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 
   useEffect(() => {
     fetchSistemDanKuota();
@@ -51,8 +50,8 @@ export default function Home() {
   }, []);
 
   const fetchSistemDanKuota = async () => {
-    let currentConfig = config;
     const { data: resConfig } = await supabase.from('pengaturan_sistem').select('*').eq('id', 1).single();
+    let currentConfig = config;
     
     if (resConfig) {
       currentConfig = resConfig;
@@ -67,14 +66,21 @@ export default function Home() {
       }
     }
 
-    const { data: dataUnik } = await supabase.from('antrian').select('nomor_hp, jenis_antrian').eq('tanggal', tglSekarang);
+    const { data: dataUnik } = await supabase.from('antrian').select('id, jenis_antrian').eq('tanggal', tglSekarang);
       
     if (dataUnik) {
-      const hpsPembuatan = new Set(dataUnik.filter(d => d.jenis_antrian === 'pembuatan_akun').map(item => item.nomor_hp));
-      const hpsVerifikasi = new Set(dataUnik.filter(d => d.jenis_antrian === 'verifikasi_akun').map(item => item.nomor_hp));
+      const tiketPembuatan = dataUnik.filter(d => d.jenis_antrian === 'pembuatan_akun').length;
+      const tiketVerifikasi = dataUnik.filter(d => d.jenis_antrian === 'verifikasi_akun').length;
+      const totalTiket = tiketPembuatan + tiketVerifikasi;
 
-      setTerpakaiPembuatan(Math.max(0, hpsPembuatan.size - (currentConfig.offset_kuota_pembuatan || 0)));
-      setTerpakaiVerifikasi(Math.max(0, hpsVerifikasi.size - (currentConfig.offset_kuota_verifikasi || 0)));
+      let offsetDB = parseInt(currentConfig.offset_kuota_pembuatan) || 0;
+      
+      // SISTEM PENYEMBUH (SELF-HEALING)
+      if (offsetDB > totalTiket) {
+        offsetDB = 0;
+      }
+
+      setTerpakaiTotal(Math.max(0, totalTiket - offsetDB));
     }
   };
 
@@ -87,8 +93,16 @@ export default function Home() {
   };
 
   const langgananRealtimeSiswa = (id) => {
+    const channelName = `ch_siswa_v5_${id}`;
+    
+    supabase.getChannels().forEach((channel) => {
+      if (channel.topic === `realtime:${channelName}`) {
+        supabase.removeChannel(channel);
+      }
+    });
+
     supabase
-      .channel(`ch_siswa_v5_${id}`)
+      .channel(channelName)
       .on('postgres_changes', { event: 'UPDATE', filter: `id=eq.${id}`, schema: 'public', table: 'antrian' }, (payload) => {
         setAntrianAktif(payload.new);
       })
@@ -113,11 +127,13 @@ export default function Home() {
     }
   };
 
-  // Rujukan Lanjutan Otomatis
+  const limitKuota = parseInt(config.kuota_pembuatan) || 0;
+  const sisaKuota = Math.max(0, limitKuota - terpakaiTotal);
+  const isKuotaPenuh = terpakaiTotal >= limitKuota;
+
   const handleRujukMandiriKeVerifikasi = async () => {
-    // Validasi Sisa Kuota Verifikasi
-    if (terpakaiVerifikasi >= config.kuota_verifikasi) {
-      alert('Maaf, kuota antrean untuk Verifikasi Akun hari ini telah penuh.');
+    if (isKuotaPenuh) {
+      alert('Maaf, kuota antrean utama hari ini telah habis.');
       return;
     }
 
@@ -159,30 +175,36 @@ export default function Home() {
   };
 
   const listSyarat = jenisAntrian === 'pembuatan_akun' ? config.checklist_pembuatan : config.checklist_verifikasi;
-  const semuaTercentang = listSyarat.length > 0 && listSyarat.every(item => checklistDipilih[item] === true);
-
-  const isPembuatanPenuh = terpakaiPembuatan >= config.kuota_pembuatan;
-  const isVerifikasiPenuh = terpakaiVerifikasi >= config.kuota_verifikasi;
+  const semuaTercentang = listSyarat.length === 0 || listSyarat.every(item => checklistDipilih[item] === true);
 
   const handleDaftar = async (e) => {
     if (e) e.preventDefault();
     setPesanError('');
     
-    // Validasi Manual khusus Safari iPhone yang terkadang gagal pada required HTML5
     if (!namaLengkap || !asalSekolah || !nomorHp) {
       setPesanError('Mohon lengkapi semua kolom identitas (Nama, Asal Sekolah, dan Nomor HP).');
       return;
     }
 
-    setLoading(true);
-    
-    if (jenisAntrian === 'pembuatan_akun' && isPembuatanPenuh) {
-      setPesanError('Maaf, kuota untuk Pengajuan Akun hari ini telah penuh.');
-      setLoading(false); return;
+    if (!/^[0-9+]+$/.test(nomorHp)) {
+      setPesanError('Nomor HP tidak valid. Hanya boleh berisi angka.');
+      return;
     }
 
-    if (jenisAntrian === 'verifikasi_akun' && isVerifikasiPenuh) {
-      setPesanError('Maaf, kuota untuk Verifikasi Akun hari ini telah penuh.');
+    if (!jenisAntrian) {
+      setPesanError('Mohon pilih salah satu layanan (Pengajuan Akun atau Verifikasi Akun) terlebih dahulu.');
+      return;
+    }
+
+    if (!semuaTercentang) {
+      setPesanError('Mohon centang konfirmasi seluruh persyaratan pendaftaran.');
+      return;
+    }
+
+    setLoading(true);
+    
+    if (isKuotaPenuh) {
+      setPesanError('Maaf, kuota antrean utama hari ini telah habis.');
       setLoading(false); return;
     }
 
@@ -213,7 +235,6 @@ export default function Home() {
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-xl border border-slate-200 text-center max-w-md w-full">
           {antrianAktif.status !== 'selesai' ? (
             <>
-              {/* Teks Peringatan Wajib Screenshot Dihapus Sesuai Permintaan */}
               <h2 className="text-xl font-bold text-slate-800 mt-2">SMA Negeri 3 Sragen</h2>
               <p className="text-xs text-slate-400">Bukti Pengambilan Nomor Antrean Online</p>
               
@@ -258,8 +279,8 @@ export default function Home() {
                   <p className="text-[11px] text-slate-600 leading-normal">
                     Lanjutkan secara otomatis dan langsung masuk ke sistem Verifikasi Akun tanpa perlu mengisi data dari awal.
                   </p>
-                  <button onClick={handleRujukMandiriKeVerifikasi} disabled={loading || isVerifikasiPenuh} className={`w-full font-bold py-2 rounded-lg text-xs transition-colors ${isVerifikasiPenuh ? 'bg-slate-300 text-white cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                    {loading ? 'Memproses...' : isVerifikasiPenuh ? 'Kuota Verifikasi Penuh' : 'Lanjut Ambil Antrean Verifikasi Akun'}
+                  <button onClick={handleRujukMandiriKeVerifikasi} disabled={loading || isKuotaPenuh} className={`w-full font-bold py-2 rounded-lg text-xs transition-colors ${isKuotaPenuh ? 'bg-slate-300 text-white cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
+                    {loading ? 'Memproses...' : isKuotaPenuh ? 'Sisa Kuota Telah Habis' : 'Lanjut Ambil Antrean Verifikasi Akun'}
                   </button>
                   <button onClick={selesaiDanKeluarSistem} className="text-[10px] text-slate-400 font-medium block mx-auto underline">
                     Tidak, Saya ingin keluar sistem
@@ -305,11 +326,8 @@ export default function Home() {
           <p className="text-xs text-slate-400 font-medium mt-0.5">SMA Negeri 3 Sragen</p>
           
           <div className="mt-4 flex flex-wrap justify-center gap-2">
-            <div className={`px-3 py-1 rounded-full text-[10px] font-semibold border ${isPembuatanPenuh ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-              Kuota Pengajuan: {terpakaiPembuatan} / {config.kuota_pembuatan}
-            </div>
-            <div className={`px-3 py-1 rounded-full text-[10px] font-semibold border ${isVerifikasiPenuh ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
-              Kuota Verifikasi: {terpakaiVerifikasi} / {config.kuota_verifikasi}
+            <div className={`px-4 py-1.5 rounded-full text-xs font-bold border ${isKuotaPenuh ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-blue-50 text-blue-700 border-blue-200 shadow-sm'}`}>
+              Sisa Kuota Utama: {sisaKuota} / {limitKuota}
             </div>
           </div>
         </div>
@@ -335,19 +353,19 @@ export default function Home() {
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-2">Pilih Bagian Layanan</label>
             <div className="grid grid-cols-2 gap-3">
-              <button type="button" onClick={() => handlePilihLayanan('pembuatan_akun')} disabled={isPembuatanPenuh} className={`border rounded-xl p-3 text-left transition-all ${isPembuatanPenuh ? 'opacity-50 cursor-not-allowed bg-slate-100' : jenisAntrian === 'pembuatan_akun' ? 'border-blue-600 bg-blue-50/40 ring-2 ring-blue-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
+              <button type="button" onClick={() => handlePilihLayanan('pembuatan_akun')} disabled={isKuotaPenuh} className={`border rounded-xl p-3 text-left transition-all ${isKuotaPenuh ? 'opacity-50 cursor-not-allowed bg-slate-100' : jenisAntrian === 'pembuatan_akun' ? 'border-blue-600 bg-blue-50/40 ring-2 ring-blue-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
                 <span className="block text-xs font-bold text-slate-800">1. Pengajuan Akun</span>
-                <span className={`block text-[10px] mt-1 font-bold ${isPembuatanPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isPembuatanPenuh ? 'KUOTA PENUH' : 'Kode Antrean A'}</span>
+                <span className={`block text-[10px] mt-1 font-bold ${isKuotaPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isKuotaPenuh ? 'SISTEM PENUH' : 'Kode Antrean A'}</span>
               </button>
 
-              <button type="button" onClick={() => handlePilihLayanan('verifikasi_akun')} disabled={isVerifikasiPenuh} className={`border rounded-xl p-3 text-left transition-all ${isVerifikasiPenuh ? 'opacity-50 cursor-not-allowed bg-slate-100' : jenisAntrian === 'verifikasi_akun' ? 'border-blue-600 bg-blue-50/40 ring-2 ring-blue-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
+              <button type="button" onClick={() => handlePilihLayanan('verifikasi_akun')} disabled={isKuotaPenuh} className={`border rounded-xl p-3 text-left transition-all ${isKuotaPenuh ? 'opacity-50 cursor-not-allowed bg-slate-100' : jenisAntrian === 'verifikasi_akun' ? 'border-blue-600 bg-blue-50/40 ring-2 ring-blue-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
                 <span className="block text-xs font-bold text-slate-800">2. Verifikasi Akun</span>
-                <span className={`block text-[10px] mt-1 font-bold ${isVerifikasiPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isVerifikasiPenuh ? 'KUOTA PENUH' : 'Kode Antrean B'}</span>
+                <span className={`block text-[10px] mt-1 font-bold ${isKuotaPenuh ? 'text-rose-500' : 'text-slate-400'}`}>{isKuotaPenuh ? 'SISTEM PENUH' : 'Kode Antrean B'}</span>
               </button>
             </div>
           </div>
 
-          {jenisAntrian && (
+          {jenisAntrian && listSyarat.length > 0 && (
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-2.5">
               <p className="text-[11px] font-bold uppercase text-slate-500 tracking-wider">Konfirmasi Persyaratan</p>
               {listSyarat.map((item, index) => (
@@ -359,14 +377,14 @@ export default function Home() {
             </div>
           )}
 
-          <button type="button" onClick={handleDaftar} disabled={loading || !semuaTercentang || (jenisAntrian === 'pembuatan_akun' ? isPembuatanPenuh : isVerifikasiPenuh)} className={`w-full py-2.5 rounded-xl text-xs font-bold text-white tracking-wide transition-all ${semuaTercentang && !loading && (jenisAntrian === 'pembuatan_akun' ? !isPembuatanPenuh : !isVerifikasiPenuh) ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'}`}>
+          <button type="button" onClick={handleDaftar} disabled={loading || !semuaTercentang || isKuotaPenuh} className={`w-full py-2.5 rounded-xl text-xs font-bold text-white tracking-wide transition-all ${semuaTercentang && !loading && !isKuotaPenuh ? 'bg-blue-600 hover:bg-blue-700 shadow-md' : 'bg-slate-300 cursor-not-allowed'}`}>
             {loading ? 'Memproses...' : 'Ambil Nomor Antrean'}
           </button>
         </form>
 
         <div className="border-t border-slate-100 mt-5 pt-4 text-center">
           <button onClick={() => setModeCari(true)} className="text-xs text-slate-400 font-medium hover:text-blue-600 transition-colors underline">
-            Nomor antrean saya hilang, cari antrean saya
+            Saya kehilangan tangkapan layar, cari antrean saya
           </button>
         </div>
       </div>

@@ -9,6 +9,8 @@ export default function DisplayMonitor() {
   const [availableVoices, setAvailableVoices] = useState([]);
   
   const nomorTerakhirDisuarakan = useRef({ pembuatan_akun: null, verifikasi_akun: null, khusus: null });
+  // PENGUNCI GANDA: Mencegah suara terpanggil 2 kali dalam waktu bersamaan (jeda 3 detik)
+  const waktuSuaraTerakhir = useRef({ pembuatan_akun: 0, verifikasi_akun: 0, khusus: 0 }); 
 
   useEffect(() => {
     const loadVoices = () => {
@@ -39,11 +41,6 @@ export default function DisplayMonitor() {
   const bunyikanSuaraPanggilan = (nomorTiket, namaSiswa, jenisLayanan) => {
     if (!window.speechSynthesis) return;
     
-    // LOGIKA BARU: Baris window.speechSynthesis.cancel() DIHAPUS.
-    // Dengan begitu, suara yang sedang berbicara TIDAK AKAN dipotong, 
-    // melainkan panggilan baru akan masuk ke sistem antrean native browser.
-    
-    // Memisahkan Huruf dan Angka agar dibaca utuh
     const pecahKode = nomorTiket.split('-');
     const huruf = pecahKode[0] || '';
     const angka = pecahKode[1] || '';
@@ -64,7 +61,6 @@ export default function DisplayMonitor() {
     utterance.rate = 0.85; 
     utterance.pitch = 1.0;    
     
-    // Menambahkan ucapan ke sistem Queue browser
     window.speechSynthesis.speak(utterance);
   };
 
@@ -111,7 +107,6 @@ export default function DisplayMonitor() {
         infoAntrian[layanan] = aktif;
       });
 
-      // Pengecekan Suara
       Object.keys(infoAntrian).forEach(layanan => {
         const baru = infoAntrian[layanan];
         const lama = nomorTerakhirDisuarakan.current[layanan];
@@ -128,7 +123,12 @@ export default function DisplayMonitor() {
           }
 
           if (panggilSuara) {
-            bunyikanSuaraPanggilan(baru.nomor, baru.nama, layanan);
+            const now = Date.now();
+            // Cek jika pemanggilan terakhir untuk layanan ini berjarak kurang dari 3 detik (cegah double click suara)
+            if (now - waktuSuaraTerakhir.current[layanan] > 3000) {
+              waktuSuaraTerakhir.current[layanan] = now;
+              bunyikanSuaraPanggilan(baru.nomor, baru.nama, layanan);
+            }
           }
         }
       });
